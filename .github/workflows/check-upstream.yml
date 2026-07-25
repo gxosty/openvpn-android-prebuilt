@@ -1,0 +1,31 @@
+name: Check upstream
+
+# Polls upstream for new stable OpenVPN releases and for new patch releases on
+# the pinned OpenSSL line, and publishes a build when either has moved.
+#
+# The actual "is there anything new?" decision lives in build-release.yml's
+# resolve job, so both the scheduled and the manual path make it identically.
+# A run that finds nothing new stops after a few seconds.
+#
+# OpenVPN publishes on more than one line at a time (2.6.x and 2.7.x have gone
+# out on the same day), so this deliberately does not follow GitHub's "latest
+# release" pointer -- see resolve_openvpn() in scripts/resolve-versions.sh.
+
+on:
+  schedule:
+    # Every 6 hours, offset off the hour so it is not competing with the
+    # top-of-hour rush on GitHub's scheduler.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build newest stable release
+    uses: ./.github/workflows/build-release.yml
+    with:
+      publish: true
+    permissions:
+      contents: write

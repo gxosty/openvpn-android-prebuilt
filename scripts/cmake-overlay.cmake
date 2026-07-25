@@ -1,0 +1,78 @@
+# ---------------------------------------------------------------------------
+# Appended verbatim to upstream OpenVPN's CMakeLists.txt by build-openvpn.sh.
+#
+# Upstream only defines `add_executable(openvpn ${SOURCE_FILES})` -- there is no
+# library target. Rather than maintaining our own copy of the source list (which
+# would silently drift every release), we append to the end of upstream's file
+# and reuse the two things it has already defined by that point:
+#
+#   ${SOURCE_FILES}      the complete source list
+#   add_library_deps()   the function that wires up OpenSSL/lz4/lzo/pkcs11
+#
+# Appending at EOF is deliberate: it does not depend on line numbers or on any
+# surrounding context, so it survives upstream reshuffling the file. If a future
+# release renames either of the two symbols above, the configure step fails loudly
+# rather than producing a subtly wrong artifact.
+# ---------------------------------------------------------------------------
+
+if (NOT DEFINED SOURCE_FILES)
+    message(FATAL_ERROR
+        "openvpn-android-prebuilt overlay: upstream no longer defines SOURCE_FILES. "
+        "scripts/cmake-overlay.cmake needs updating for this OpenVPN release.")
+endif ()
+
+if (NOT COMMAND add_library_deps)
+    message(FATAL_ERROR
+        "openvpn-android-prebuilt overlay: upstream no longer defines add_library_deps(). "
+        "scripts/cmake-overlay.cmake needs updating for this OpenVPN release.")
+endif ()
+
+# Same defines upstream puts on the `openvpn` executable target. Without these,
+# options.c fails to compile (DEFAULT_DNS_UPDOWN and PLUGIN_LIBDIR are referenced
+# unconditionally on non-Windows platforms).
+set(OVPN_PREBUILT_DEFS
+    -DDEFAULT_DNS_UPDOWN=\"${DNS_UPDOWN_PATH}\"
+    -DPLUGIN_LIBDIR=\"${PLUGIN_DIR}\")
+
+# 16 KB page alignment. Required for Android 15+ devices that use 16 KB pages;
+# NDK r28+ does this by default, this keeps it true on older NDKs as well.
+set(OVPN_PREBUILT_LINK_OPTS -Wl,-z,max-page-size=16384)
+
+# --- static library --------------------------------------------------------
+# POSITION_INDEPENDENT_CODE is not optional here: consumers routinely link this
+# archive into their own shared library, which fails on a non-PIC archive.
+
+add_library(openvpn_static STATIC ${SOURCE_FILES})
+add_library_deps(openvpn_static)
+target_compile_options(openvpn_static PRIVATE ${OVPN_PREBUILT_DEFS})
+set_target_properties(openvpn_static PROPERTIES
+    OUTPUT_NAME openvpn
+    POSITION_INDEPENDENT_CODE ON)
+
+# --- shared library --------------------------------------------------------
+# --exclude-libs,ALL keeps symbols coming from statically linked dependencies
+# (libcrypto.a, libssl.a, liblzo2.a, liblz4.a) out of the dynamic symbol table,
+# so this .so cannot collide with another OpenSSL the host app already loads.
+# It is a no-op in shared-deps mode.
+
+add_library(openvpn_shared SHARED ${SOURCE_FILES})
+add_library_deps(openvpn_shared)
+target_compile_options(openvpn_shared PRIVATE ${OVPN_PREBUILT_DEFS})
+target_link_options(openvpn_shared PRIVATE
+    -Wl,--exclude-libs,ALL
+    ${OVPN_PREBUILT_LINK_OPTS})
+set_target_properties(openvpn_shared PROPERTIES
+    OUTPUT_NAME openvpn
+    POSITION_INDEPENDENT_CODE ON)
+
+# --- PIE executable --------------------------------------------------------
+# Upstream's own `openvpn` target, which already has main() from openvpn.c.
+# Shipped under a lib*.so name so Android's package installer extracts it into
+# nativeLibraryDir with the exec bit set; it is then spawned as a subprocess and
+# driven over the management interface (the ics-openvpn model).
+
+target_link_options(openvpn PRIVATE -fPIE -pie ${OVPN_PREBUILT_LINK_OPTS})
+target_compile_options(openvpn PRIVATE -fPIE)
+
+message(STATUS "openvpn-android-prebuilt: added openvpn_static, openvpn_shared; "
+               "PIE executable from upstream 'openvpn' target")

@@ -1,0 +1,5 @@
+# Build scratch space and outputs -- everything here is reproducible.
+/work/
+/out/
+
+__pycache__/

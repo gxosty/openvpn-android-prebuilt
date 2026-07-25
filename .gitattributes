@@ -1,0 +1,10 @@
+# Shell scripts and workflows run on Linux runners; CRLF line endings would
+# break them ("bad interpreter: /usr/bin/env bash^M"). Force LF regardless of
+# the platform they are committed from.
+* text=auto eol=lf
+
+*.sh    text eol=lf
+*.cmake text eol=lf
+*.yml   text eol=lf
+*.py    text eol=lf
+*.h     text eol=lf

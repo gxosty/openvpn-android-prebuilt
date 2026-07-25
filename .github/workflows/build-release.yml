@@ -1,0 +1,278 @@
+name: Build & release
+
+# Builds OpenVPN for Android and publishes the artifacts as a GitHub release.
+#
+# Called on a schedule by check-upstream.yml, and manually from the Actions tab.
+# The `resolve` job decides whether there is anything new to build, so a
+# scheduled run that finds nothing costs a few seconds and stops there.
+#
+# Scripts are invoked as `bash scripts/...` rather than directly: the exec bit
+# does not survive every checkout (notably from Windows), and a missing +x is a
+# needlessly confusing failure.
+
+on:
+  workflow_dispatch:
+    inputs:
+      openvpn_tag:
+        description: "Upstream OpenVPN tag (blank = newest stable release)"
+        required: false
+        default: ""
+      openssl_version:
+        description: "OpenSSL version or line (blank = value in versions.env)"
+        required: false
+        default: ""
+      api_level:
+        description: "Minimum Android API level (blank = value in versions.env)"
+        required: false
+        default: ""
+      publish:
+        description: "Publish a GitHub release (off = build and verify only)"
+        type: boolean
+        default: false
+      force:
+        description: "Build even if this exact build key was already released"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      openvpn_tag:
+        type: string
+        required: false
+        default: ""
+      openssl_version:
+        type: string
+        required: false
+        default: ""
+      api_level:
+        type: string
+        required: false
+        default: ""
+      publish:
+        type: boolean
+        default: true
+      force:
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: openvpn-android-release
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  resolve:
+    name: Resolve versions
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.decide.outputs.should_build }}
+      openvpn_tag: ${{ steps.versions.outputs.openvpn_tag }}
+      openvpn_version: ${{ steps.versions.outputs.openvpn_version }}
+      openssl_version: ${{ steps.versions.outputs.openssl_version }}
+      ndk_version: ${{ steps.versions.outputs.ndk_version }}
+      api_level: ${{ steps.versions.outputs.api_level }}
+      abis: ${{ steps.versions.outputs.abis }}
+      build_key: ${{ steps.versions.outputs.build_key }}
+      dep_key: ${{ steps.versions.outputs.dep_key }}
+      release_tag: ${{ steps.decide.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve versions
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPENVPN_TAG_OVERRIDE: ${{ inputs.openvpn_tag }}
+          INPUT_OPENSSL: ${{ inputs.openssl_version }}
+          INPUT_API_LEVEL: ${{ inputs.api_level }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_OPENSSL" ]; then export OPENSSL_LINE="$INPUT_OPENSSL"; fi
+          if [ -n "$INPUT_API_LEVEL" ]; then export API_LEVEL="$INPUT_API_LEVEL"; fi
+
+          eval "$(bash scripts/resolve-versions.sh)"
+
+          {
+            echo "openvpn_tag=$OPENVPN_TAG"
+            echo "openvpn_version=$OPENVPN_VERSION"
+            echo "openssl_version=$OPENSSL_VERSION"
+            echo "ndk_version=$NDK_VERSION"
+            echo "api_level=$API_LEVEL"
+            echo "build_key=$BUILD_KEY"
+            # Dependency cache key: deliberately excludes the OpenVPN version,
+            # since OpenSSL/LZO/LZ4 do not depend on it.
+            echo "dep_key=v1-$OPENSSL_VERSION-$LZO_VERSION-$LZ4_VERSION-$NDK_VERSION-api$API_LEVEL"
+            printf 'abis=['; printf '"%s",' $ABIS | sed 's/,$//'; printf ']\n'
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Resolved versions"
+            echo "- OpenVPN \`$OPENVPN_TAG\`"
+            echo "- OpenSSL \`$OPENSSL_VERSION\`, LZO \`$LZO_VERSION\`, LZ4 \`$LZ4_VERSION\`"
+            echo "- NDK \`$NDK_VERSION\`, min API \`$API_LEVEL\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Decide whether to build
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_KEY: ${{ steps.versions.outputs.build_key }}
+          VERSION: ${{ steps.versions.outputs.openvpn_version }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+
+          # Published releases carry their build key verbatim in the body, so a
+          # rebuild is warranted exactly when no release matches.
+          bodies="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].body' || true)"
+          tags="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name' || true)"
+
+          if [ "$FORCE" != "true" ] && grep -qF "$BUILD_KEY" <<<"$bodies"; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "release_tag=" >> "$GITHUB_OUTPUT"
+            echo "Nothing to build: \`$BUILD_KEY\` has already been released." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Next build number for this OpenVPN version: v2.7.5-1, v2.7.5-2, ...
+          previous="$(grep -oE "^v${VERSION//./\\.}-[0-9]+$" <<<"$tags" | sed 's/.*-//' | sort -n | tail -n1 || true)"
+          next=$(( ${previous:-0} + 1 ))
+
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+          echo "release_tag=v$VERSION-$next" >> "$GITHUB_OUTPUT"
+          echo "- Release tag: \`v$VERSION-$next\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.abi }}
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: ${{ fromJSON(needs.resolve.outputs.abis) }}
+    env:
+      # versions.env defers to the environment, so these win over its defaults.
+      OPENVPN_TAG: ${{ needs.resolve.outputs.openvpn_tag }}
+      OPENSSL_VERSION: ${{ needs.resolve.outputs.openssl_version }}
+      NDK_VERSION: ${{ needs.resolve.outputs.ndk_version }}
+      API_LEVEL: ${{ needs.resolve.outputs.api_level }}
+      BUILD_KEY: ${{ needs.resolve.outputs.build_key }}
+      WORK_DIR: ${{ github.workspace }}/work
+      OUT_DIR: ${{ github.workspace }}/out
+      CMAKE_GENERATOR: Ninja
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config unzip
+
+      - name: Cache NDK
+        id: ndk-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ndk
+          key: ndk-${{ needs.resolve.outputs.ndk_version }}-linux
+
+      - name: Download NDK
+        if: steps.ndk-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ndk"
+          url="https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
+          echo "downloading $url"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/ndk.zip" "$url"
+          unzip -q "$RUNNER_TEMP/ndk.zip" -d "$RUNNER_TEMP/ndk"
+          rm -f "$RUNNER_TEMP/ndk.zip"
+
+      - name: Locate NDK
+        run: |
+          set -euo pipefail
+          ndk="$(find "$RUNNER_TEMP/ndk" -maxdepth 1 -type d -name 'android-ndk-*' | head -n1)"
+          [ -n "$ndk" ] || { echo "no NDK found under $RUNNER_TEMP/ndk"; exit 1; }
+          echo "ANDROID_NDK_ROOT=$ndk" >> "$GITHUB_ENV"
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: work/deps/${{ matrix.abi }}
+          key: deps-${{ matrix.abi }}-${{ needs.resolve.outputs.dep_key }}
+
+      - name: Build dependencies
+        run: bash scripts/build-deps.sh "${{ matrix.abi }}"
+
+      - name: Build OpenVPN (static deps)
+        run: bash scripts/build-openvpn.sh "${{ matrix.abi }}" static
+
+      - name: Build OpenVPN (shared deps)
+        run: bash scripts/build-openvpn.sh "${{ matrix.abi }}" shared
+
+      - name: Package
+        run: bash scripts/package.sh "${{ matrix.abi }}"
+
+      - name: Verify
+        run: bash scripts/verify.sh "${{ matrix.abi }}"
+
+      # Two paths, so the artifact keeps the out/ layout: dist/ and build-info/.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.abi }}
+          path: |
+            out/dist
+            out/build-info
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish release
+    needs: [resolve, build]
+    if: needs.resolve.outputs.should_build == 'true' && inputs.publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: assets
+
+      - name: Assemble assets
+        run: |
+          set -euo pipefail
+          # The public header is the same for every ABI; ship it once, flat.
+          cp include/openvpn-lib.h assets/dist/openvpn-lib.h
+          cd assets/dist
+          # The glob is expanded before SHA256SUMS is created, so it cannot
+          # list itself.
+          sha256sum * > SHA256SUMS
+          ls -lh
+
+      - name: Render release notes
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 scripts/render-release-notes.py \
+            --build-info assets/build-info \
+            --tag "${{ needs.resolve.outputs.release_tag }}" \
+            --run-url "$RUN_URL" > release-body.md
+          cat release-body.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          OPENVPN_VERSION: ${{ needs.resolve.outputs.openvpn_version }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" \
+            --title "OpenVPN $OPENVPN_VERSION for Android ($RELEASE_TAG)" \
+            --notes-file release-body.md \
+            assets/dist/*
