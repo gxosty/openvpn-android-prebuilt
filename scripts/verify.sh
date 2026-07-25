@@ -48,28 +48,61 @@ expect()     { local d="$1"; shift; if "$@"; then _report "$d" 0; else _report "
 expect_not() { local d="$1"; shift; if "$@"; then _report "$d" 1; else _report "$d" 0; fi; }
 
 # --- predicates ------------------------------------------------------------
+#
+# These deliberately never write `tool | grep -q`. `grep -q` exits at the first
+# match and closes the pipe; the producer then dies of SIGPIPE (or, for the LLVM
+# tools, exits with a broken-pipe error), and `set -o pipefail` reports the whole
+# pipeline as failed. That inverts the result: a symbol that IS present reads as
+# absent, and -- worse -- a "must not contain" check silently passes precisely
+# when it should fail. It is also load-bearing that the output is big enough for
+# the producer to still be writing when grep quits, so the bug only shows up on
+# large inputs like a merged static archive.
+#
+# Capture first, match against a here-string. No pipeline, no SIGPIPE.
 
-elf_field()   { "$READELF" -h "$1" | sed -n "s/^ *$2: *//p" | head -n1; }
-field_is()    { [ "$(elf_field "$1" "$2")" = "$3" ]; }
-has_interp()  { "$READELF" -lW "$1" | grep -q '^ *INTERP'; }
-needs_lib()   { "$READELF" -d "$1" 2>/dev/null | grep -qF "Shared library: [$2]"; }
-exports_sym() { "$NM" -D --defined-only "$1" 2>/dev/null | grep -qw "$2"; }
+# Read-only queries; failure surfaces via the positive assertions below (an
+# empty symbol list makes "exports openvpn_main" fail loudly), so tolerate a
+# non-zero exit here rather than aborting with an opaque error.
+tool_out() { "$@" 2>/dev/null || true; }
+
+elf_field() {
+    local out
+    out="$(tool_out "$READELF" -h "$1")"
+    out="$(sed -n "s/^ *$2: *//p" <<<"$out")"
+    printf '%s' "${out%%$'\n'*}"
+}
+field_is() { [ "$(elf_field "$1" "$2")" = "$3" ]; }
+
+has_interp() {
+    local out; out="$(tool_out "$READELF" -lW "$1")"
+    grep -qE '^ *INTERP' <<<"$out"
+}
+needs_lib() {
+    local out; out="$(tool_out "$READELF" -d "$1")"
+    grep -qF "Shared library: [$2]" <<<"$out"
+}
+exports_sym() {
+    local out; out="$(tool_out "$NM" -D --defined-only "$1")"
+    grep -qw -- "$2" <<<"$out"
+}
 exports_any_openssl() {
-    "$NM" -D --defined-only "$1" 2>/dev/null \
-        | grep -qE '\b(SSL_CTX_new|EVP_EncryptInit_ex|OPENSSL_init_crypto)\b'
+    local out; out="$(tool_out "$NM" -D --defined-only "$1")"
+    grep -qE '\b(SSL_CTX_new|EVP_EncryptInit_ex|OPENSSL_init_crypto)\b' <<<"$out"
 }
 archive_has_global() {
-    "$NM" --defined-only "$1" 2>/dev/null | grep -qE "^[0-9a-fA-F]* T $2\$"
+    local out; out="$(tool_out "$NM" --defined-only "$1")"
+    grep -qE "^[[:space:]]*[0-9a-fA-F]*[[:space:]]+T[[:space:]]+$2\$" <<<"$out"
 }
 
 # All LOAD segments aligned to at least 16 KB. Bash arithmetic understands the
 # 0x... values readelf prints, so no gawk-only strtonum() needed.
 loads_16k_aligned() {
-    local a
+    local out a
+    out="$(tool_out "$READELF" -lW "$1")"
     while read -r a; do
         [ -n "$a" ] || continue
         (( a >= 16384 )) || return 1
-    done < <("$READELF" -lW "$1" | awk '$1=="LOAD" { print $NF }')
+    done < <(awk '$1=="LOAD" { print $NF }' <<<"$out")
     return 0
 }
 

@@ -193,7 +193,9 @@ jobs:
       - name: Locate NDK
         run: |
           set -euo pipefail
-          ndk="$(find "$RUNNER_TEMP/ndk" -maxdepth 1 -type d -name 'android-ndk-*' | head -n1)"
+          # -print -quit rather than `| head -n1`, which would leave find writing
+          # into a closed pipe and fail the step under `set -o pipefail`.
+          ndk="$(find "$RUNNER_TEMP/ndk" -maxdepth 1 -type d -name 'android-ndk-*' -print -quit)"
           [ -n "$ndk" ] || { echo "no NDK found under $RUNNER_TEMP/ndk"; exit 1; }
           echo "ANDROID_NDK_ROOT=$ndk" >> "$GITHUB_ENV"
 

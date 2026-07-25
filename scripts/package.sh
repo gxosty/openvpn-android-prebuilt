@@ -194,7 +194,10 @@ done
 
 # --- build-info.json -------------------------------------------------------
 
-CLANG_VERSION="$("$TOOLCHAIN_BIN/clang" --version | head -n1)"
+# First line only, without `| head -n1`: that would leave clang writing into a
+# closed pipe, and `set -o pipefail` would fail the assignment.
+CLANG_VERSION="$("$TOOLCHAIN_BIN/clang" --version)"
+CLANG_VERSION="${CLANG_VERSION%%$'\n'*}"
 OPENVPN_COMMIT="$(sed -n 's/^OPENVPN_COMMIT=//p' "$OUT_DIR/raw/$ABI/static/.buildmeta")"
 
 mkdir -p "$OUT_DIR/build-info"
