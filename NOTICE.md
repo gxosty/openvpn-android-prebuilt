@@ -21,7 +21,9 @@ Because the published artifacts are covered by the GPL, anyone receiving them is
 corresponding source. That obligation is met by the links in every release body, which point at the
 exact upstream tag and commit, together with this repository, which contains the complete build
 recipe. The only change applied to the OpenVPN tree is `scripts/cmake-overlay.cmake`, appended to
-`CMakeLists.txt` to add library targets alongside upstream's executable target; it adds no code.
+`CMakeLists.txt` to add library targets alongside upstream's executable target. The sole code it
+contributes is a three-line entry-point shim exporting `openvpn_main()`; no OpenVPN source file is
+edited.
 
 ## OpenSSL — Apache-2.0
 

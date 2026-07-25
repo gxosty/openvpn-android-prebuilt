@@ -204,9 +204,11 @@ def main() -> None:
     # -- integration ---------------------------------------------------------
     w("## Integration notes")
     w("")
-    w("- The entry point is `int openvpn_main(int argc, char *argv[])` — upstream's "
-      "`main()` is a wrapper around it. `main()` is demoted to a local symbol in the "
-      "static archives so you can link them from a program that has its own `main()`.")
+    w("- The entry point is `int openvpn_main(int argc, char *argv[])`. Upstream exports no "
+      "entry point of its own — its `openvpn_main()` is `static` and its `main()` cannot be "
+      "shipped in a library — so the library targets compile `openvpn.c` with `main()` renamed "
+      "and export `openvpn_main()` on top. Neither library contains a `main` symbol, so you can "
+      "link them from a program that has its own `main()`.")
     w("- **Rename before use in `jniLibs`.** Android only extracts entries matching "
       "`lib*.so` and matches on the exact filename, so `libopenvpn-arm64-v8a-static-deps.so` "
       "must become `libopenvpn.so`. The tarballs already contain correctly named files.")
@@ -250,9 +252,10 @@ def main() -> None:
     w(f"- LZO `{first['lzo']}` — https://www.oberhumer.com/opensource/lzo/ (GPL-2.0-or-later)")
     w(f"- LZ4 `{first['lz4']}` — https://github.com/lz4/lz4/tree/v{first['lz4']} (BSD-2-Clause)")
     w("")
-    w("The only change applied to the OpenVPN tree is an append to `CMakeLists.txt` that "
-      "adds library targets alongside upstream's executable target; it is in "
-      "`scripts/cmake-overlay.cmake` in this repository and adds no code.")
+    w("The only change applied to the OpenVPN tree is an append to `CMakeLists.txt` that adds "
+      "library targets alongside upstream's executable target, in `scripts/cmake-overlay.cmake` "
+      "in this repository. The sole code it contributes is a three-line entry-point shim "
+      "exporting `openvpn_main()`; no OpenVPN source file is edited.")
     if args.run_url:
         w("")
         w(f"Built by [this workflow run]({args.run_url}).")

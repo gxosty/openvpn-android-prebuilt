@@ -24,8 +24,6 @@ require_cmds tar sha256sum python3
 
 TOOLCHAIN_BIN="$(ndk_toolchain_bin)"
 AR="$TOOLCHAIN_BIN/llvm-ar"
-NM="$TOOLCHAIN_BIN/llvm-nm"
-OBJCOPY="$TOOLCHAIN_BIN/llvm-objcopy"
 STRIP="$TOOLCHAIN_BIN/llvm-strip"
 READELF="$TOOLCHAIN_BIN/llvm-readelf"
 
@@ -87,12 +85,10 @@ for MODE in static shared; do
 
     # --- static library ---
     #
-    # openvpn.c defines both openvpn_main() and main(). Pulling the archive
-    # member in for openvpn_main() would therefore also drag main() in and
-    # collide with the consumer's own main(). Demoting main() to a local symbol
-    # keeps the archive usable from an executable that has its own entry point.
+    # No symbol surgery needed: the overlay compiles openvpn.c with
+    # -Dmain=openvpn_main_entry for the library targets, so the archive has no
+    # main() to collide with the consumer's own.
     cp "$RAW/libopenvpn.a" "$work/libopenvpn.a"
-    "$OBJCOPY" --localize-symbol=main "$work/libopenvpn.a"
 
     if [ "$MODE" = "static" ]; then
         # Fat archive: merge the dependencies in so the result links standalone.

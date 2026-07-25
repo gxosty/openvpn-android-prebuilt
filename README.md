@@ -75,9 +75,11 @@ char *argv[] = { "openvpn", "--config", path, "--management", ..., NULL };
 int rc = openvpn_main(sizeof(argv) / sizeof(*argv) - 1, argv);
 ```
 
-`openvpn_main()` is upstream's real entry point — `main()` is a three-line wrapper around it. In the
-static archives `main()` is demoted to a local symbol, so you can link them from a program that has
-its own `main()` without a duplicate-symbol error.
+`openvpn_main()` is the entry point of the openvpn program. Upstream exports no entry point of its
+own — its `openvpn_main()` is declared `static`, and its `main()` cannot be shipped in a library
+because it would collide with yours — so the library targets compile `openvpn.c` with `main()`
+renamed and export `openvpn_main()` on top. The libraries contain no `main` symbol at all, so you can
+link them from a program that has its own `main()`.
 
 Two things to know before running OpenVPN in-process: it keeps process-wide state and installs
 signal handlers, so it is neither re-entrant nor safe to run twice concurrently; and it calls

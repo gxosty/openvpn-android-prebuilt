@@ -123,8 +123,9 @@ verify_archive_symbols() { # <file>
     local f="$1" name
     name="$(basename "$f")"
     expect     "$name: openvpn_main is a global symbol" archive_has_global "$f" openvpn_main
-    # main() must have been demoted to a local symbol, otherwise this archive
-    # cannot be linked into a program that has its own main().
+    # The overlay renames openvpn.c's main() away for the library targets. If it
+    # ever reappears, this archive can no longer be linked into a program that
+    # has its own main().
     expect_not "$name: main is not a global symbol"     archive_has_global "$f" main
 }
 

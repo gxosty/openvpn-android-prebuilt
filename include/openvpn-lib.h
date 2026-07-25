@@ -17,8 +17,13 @@ extern "C" {
 #endif
 
 /**
- * Run OpenVPN. This is the real entry point of the openvpn binary --
- * src/openvpn/openvpn.c defines main() as nothing but a wrapper around it.
+ * Run OpenVPN. This is the entry point of the openvpn program.
+ *
+ * Upstream has no exported entry point of its own: src/openvpn/openvpn.c
+ * declares its openvpn_main() `static`, and its main() cannot be shipped in a
+ * library because it would collide with yours. The prebuilt libraries therefore
+ * compile that translation unit with main() renamed and export this function on
+ * top of it. It is the same code path the openvpn binary takes.
  *
  * argv follows the usual convention: argv[0] is the program name and argv[argc]
  * must be NULL. Options are the same ones you would pass on the command line,
