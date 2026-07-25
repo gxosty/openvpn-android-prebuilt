@@ -33,7 +33,7 @@ Plus, per ABI: `libcrypto-<abi>.{a,so}`, `libssl-<abi>.{a,so}`, `liblzo2-<abi>.{
 
 Android's package installer only extracts entries matching `lib*.so` into `nativeLibraryDir`, and
 only those come out with the exec bit set. Naming a PIE executable `lib….so` is the standard trick
-(used by ics-openvpn) for shipping a runnable binary inside an APK. Spawn it as a child process and
+(used by [ics-openvpn](https://github.com/schwabe/ics-openvpn)) for shipping a runnable binary inside an APK. Spawn it as a child process and
 drive it over OpenVPN's management interface — do not try to link it.
 
 ---
@@ -87,8 +87,7 @@ signal handlers, so it is neither re-entrant nor safe to run twice concurrently;
 `libopenvpnexec.so` in a child process instead.
 
 On Android the tun device cannot be opened directly — hand the `VpnService` file descriptor to
-OpenVPN over the management interface. [ics-openvpn](https://github.com/schwabe/ics-openvpn) is the
-reference implementation of that protocol.
+OpenVPN over the management interface.
 
 ### Choosing a variant
 
@@ -98,6 +97,11 @@ reference implementation of that protocol.
 - **Several native libraries in your app share one OpenSSL:** `-shared-deps`, and ship the
   `libcrypto.so` / `libssl.so` / `liblzo2.so` / `liblz4.so` from the same release.
 - **Static linking into your own `.so`:** `libopenvpn-<abi>-static-deps.a`. It is built PIC.
+
+>[!Important]
+>Directly linking OpenVPN library to with your project (both static or shared) will force you to make
+>your project source code publicly available. That's because OpenVPN is licensed under GPL-2.0 license.
+>You can still use PIE version to keep your source code private.
 
 ---
 
