@@ -13,9 +13,9 @@ name: Check upstream
 
 on:
   schedule:
-    # Every 6 hours, offset off the hour so it is not competing with the
+    # Every 12 hours, offset off the hour so it is not competing with the
     # top-of-hour rush on GitHub's scheduler.
-    - cron: "17 */6 * * *"
+    - cron: "17 */12 * * *"
   workflow_dispatch:
 
 permissions:
